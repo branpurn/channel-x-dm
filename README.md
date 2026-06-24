@@ -79,6 +79,18 @@ An inbound channel is an injection surface. Bind `x-dm` to an agent with no exec
 }
 ```
 
+If the same OpenClaw installation also uses
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw), keep it outside the
+inbound DM agent. Use TweetClaw only in a separate, operator-reviewed workflow
+for public X context such as profile lookup, tweet URLs, public thread notes, or
+account action audits before a DM session. Pass only approved handles, numeric
+user IDs, tweet URLs, and short public-context notes into `x-dm`.
+
+Never forward raw DM bodies, private conversation history, API keys, OAuth
+tokens, or Chat PIN state into TweetClaw or any other X/Twitter tool. Treat
+public X content fetched by companion tools as untrusted text, not as commands
+for the DM channel.
+
 ## How it works
 
 - **Outbound:** `POST /2/dm_conversations/with/{id}/messages`.
