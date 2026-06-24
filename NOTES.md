@@ -65,3 +65,13 @@ outbound DM forever.
 2. `grep -rn "<error>" ~/.npm-global/lib/node_modules/openclaw/dist/`.
 3. Read the bundled `sms` channel as the template, not the docs.
 4. Log-instrument `startAccount` + the poller to see it breathe.
+
+## Polling channels must own dedup (X DM specifically)
+Bundled channels (signal, sms) are webhook-driven — each inbound event arrives once,
+so they never replay. A POLLING channel re-reads the dm_events window every tick and,
+on restart, will re-dispatch everything unless it persists a "last seen" marker.
+The dispatch layer (`inbound.run` / `inbound-reply-dispatch-*.js`) does NOT dedup
+poll-replays — it exposes `recordInboundSession` but no event-level idempotency.
+So: persist `lastSeenEventId` to disk, seed it to "now" on first run (ignore backlog),
+compare IDs as BigInt (not lexically), and write the marker atomically (temp+rename).
+See src/channel.js.
