@@ -3,12 +3,9 @@ import {
 } from "openclaw/plugin-sdk/channel-core";
 import fs from "node:fs";
 import os from "node:os";
-import { sendDm, fetchDmEvents } from "./client.js";
+import { sendDm, fetchDmEvents, isConfigured as credsReady, botUserId, missingKeys } from "./client.js";
 
 const CHANNEL_ID = "x-dm";
-// IMPORTANT: set this to YOUR bot account's numeric user ID so the poller
-// skips the bot's own sent messages (prevents reply loops). setup.sh patches it.
-const BOT_USER_ID = "0000000000000000000";
 const STATE_FILE = `${os.homedir()}/.openclaw/x-dm-state.json`;
 
 const IDLE_MS = 300000;          // 5 min when quiet
@@ -151,8 +148,7 @@ async function dispatchInbound(ctx, account, e) {
   });
 }
 
-export const xDmPlugin = createChatChannelPlugin({
-  base: {
+export const xDmBase = {
     id: CHANNEL_ID,
     meta: {
       id: CHANNEL_ID,
@@ -176,13 +172,13 @@ export const xDmPlugin = createChatChannelPlugin({
       resolveAccount: resolveXAccount,
       inspectAccount: (cfg) => {
         const s = getChannelConfig(cfg);
-        return { enabled: s.enabled !== false };
+        return { enabled: s.enabled !== false, configured: credsReady() };
       },
-      isConfigured: () => true,
+      isConfigured: () => credsReady(),
       describeAccount: (account) => ({
         accountId: account.accountId,
         name: "X DM",
-        configured: true,
+        configured: credsReady(),
         enabled: account.enabled,
       }),
     },
@@ -197,9 +193,33 @@ export const xDmPlugin = createChatChannelPlugin({
     gateway: {
       startAccount: async (ctx) => {
         const log = ctx?.log ?? console;
+
+        const awaitAbort = () =>
+          new Promise((resolve) => {
+            const sig = ctx?.abortSignal;
+            if (sig?.aborted) return resolve();
+            sig?.addEventListener?.("abort", () => resolve(), { once: true });
+          });
+
+        // Not configured yet: stay alive but DORMANT — no polling, no API calls,
+        // no cost, no crash. Lets the plugin be installed (e.g. from ClawHub)
+        // before setup.sh runs. Provide credentials + restart to activate.
+        if (!credsReady()) {
+          log.warn?.(
+            `x-dm: not configured — missing ${missingKeys().join(", ")} in ~/.openclaw/x-dm-keys.env. ` +
+              "Run setup.sh (or create the env file), then restart the gateway. Staying dormant."
+          );
+          await awaitAbort();
+          return;
+        }
+
         const account = resolveXAccount(ctx.cfg, ctx.accountId);
+        const botId = botUserId();
 
         let lastSeenEventId = loadLastSeen();
+        if (!botId) {
+          log.warn?.("x-dm: X_USER_ID not set in ~/.openclaw/x-dm-keys.env — loop protection is DISABLED (the bot can reply to its own messages). Set X_USER_ID and restart.");
+        }
         log.info?.(`x-dm: startAccount — adaptive poller (lastSeen=${lastSeenEventId ?? "none"})`);
 
         let lastInboundAt = 0;
@@ -237,7 +257,7 @@ export const xDmPlugin = createChatChannelPlugin({
               // Advance the marker even on dispatch failure (see header comment:
               // drop-on-error, not retry — avoids poison-message loops).
               if (idGreater(e.id, newMarker)) newMarker = e.id;
-              if (String(e.sender_id) === BOT_USER_ID) continue; // skip own sends
+              if (botId && String(e.sender_id) === botId) continue; // skip own sends
               gotInbound = true;
               log.info?.(`x-dm: inbound from ${e.sender_id}: ${String(e.text).slice(0, 40)}`);
               try {
@@ -281,8 +301,10 @@ export const xDmPlugin = createChatChannelPlugin({
         await runner;
       },
     },
-  },
+};
 
+export const xDmPlugin = createChatChannelPlugin({
+  base: xDmBase,
   security: {
     resolveDmPolicy: (account) => account.dmPolicy,
   },
