@@ -9,7 +9,7 @@ Send **and** receive both work. The one hard requirement is that the bot account
 - **A dedicated X account for the agent that has *never* set an X Chat PIN.** Non-negotiable. X end-to-end-encrypts DMs once both parties enroll (set a PIN), and the API is blind to encrypted messages. A no-PIN bot account keeps every conversation unencrypted and therefore API-readable — even when the human you're talking to has E2E enabled. Never open the Chat tab in a way that enrolls it.
 - **Willingness to pay-as-you-go for the X API.** Pay-per-use, no subscription. Roughly: DM send ≈ $0.015, owned read (poll) ≈ $0.001. With the adaptive poller (5 min idle, 30 s during active chats), idle cost is ~$0.09/day; real usage is pennies.
 - **OpenClaw 2026.6.x** (built against `2026.6.9`).
-- **Node** + `npm` (the plugin's one dependency, `oauth-1.0a`, installs locally).
+- **Node** — the plugin is pure JavaScript with **no external dependencies** (OAuth 1.0a is signed inline with `node:crypto`), so there's nothing to `npm install`.
 - An X developer app on **pay-per-use** with **Read + Write + Direct Messages** permission, and **OAuth 1.0a** keys generated *after* setting that permission. You'll need the four keys plus the bot's numeric user ID.
 
 ## Install
