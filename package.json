@@ -6,7 +6,6 @@
   "license": "MIT",
   "files": [
     "src",
-    "setup-entry.js",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
@@ -15,7 +14,7 @@
     "extensions": [
       "./src/index.js"
     ],
-    "setupEntry": "./setup-entry.js",
+    "setupEntry": "./src/channel.setup.js",
     "channel": {
       "id": "x-dm",
       "label": "X DM",
