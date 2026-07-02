@@ -1,9 +1,19 @@
 {
   "name": "openclaw-x-dm",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "description": "OpenClaw channel plugin for X (Twitter) Direct Messages",
   "type": "module",
   "license": "MIT",
-  "openclaw": { "extensions": ["./index.js"] },
+  "files": [
+    "src",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "openclaw": {
+    "extensions": ["./src/index.js"],
+    "compat": { "pluginApi": ">=2026.6.9" },
+    "build": { "openclawVersion": "2026.6.9" }
+  },
   "dependencies": { "oauth-1.0a": "^2.2.6" }
 }

@@ -1,0 +1,60 @@
+name: Release to ClawHub
+
+# Cut a release without leaving the browser:
+#   Actions -> "Release to ClawHub" -> Run workflow -> pick patch/minor/major.
+# It bumps the version, publishes to ClawHub, then pushes the commit + tag.
+# No local commands, no Docker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  # Release automatically on every merge to main that touches code.
+  # The [skip ci] in the release commit (below) stops it from looping.
+  push:
+    branches: [main]
+    paths: ["src/**", "openclaw.plugin.json", "package.json"]
+
+permissions:
+  contents: write     # push the version-bump commit + tag
+  id-token: write     # optional: OIDC trusted publishing
+
+concurrency:
+  group: release-clawhub
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Identify the committer
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version (local commit + tag)
+        run: |
+          npm version "${{ inputs.bump || 'patch' }}" -m "chore(release): %s [skip ci]"
+
+      - name: Publish to ClawHub FIRST (keeps git + registry consistent on failure)
+        env:
+          CLAWHUB_AUTH: ${{ secrets.CLAWHUB_TOKEN }}
+        run: clawhub package publish . --family code-plugin
+
+      - name: Push commit + tag only after a successful publish
+        run: git push --follow-tags

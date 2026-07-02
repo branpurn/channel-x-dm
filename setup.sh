@@ -20,10 +20,8 @@ command -v npm      >/dev/null 2>&1 || die "npm not found on PATH."
 command -v node     >/dev/null 2>&1 || die "node not found on PATH."
 
 say "Installing x-dm into ${EXT_DIR}"
-mkdir -p "${EXT_DIR}"
-cp -f "${SCRIPT_DIR}/src/index.js"         "${EXT_DIR}/index.js"
-cp -f "${SCRIPT_DIR}/src/channel.js"       "${EXT_DIR}/channel.js"
-cp -f "${SCRIPT_DIR}/src/client.js"        "${EXT_DIR}/client.js"
+mkdir -p "${EXT_DIR}/src"
+cp -f "${SCRIPT_DIR}/src/"*.js "${EXT_DIR}/src/"
 cp -f "${SCRIPT_DIR}/openclaw.plugin.json" "${EXT_DIR}/openclaw.plugin.json"
 cp -f "${SCRIPT_DIR}/package.json"         "${EXT_DIR}/package.json"
 
@@ -57,7 +55,7 @@ fi
 # Patch BOT_USER_ID into channel.js from the env file (skips bot's own sends)
 BOT_ID="$(grep '^X_USER_ID=' "${ENV_FILE}" | cut -d= -f2- | tr -d '[:space:]')"
 if [[ -n "${BOT_ID}" ]]; then
-  sed -i "s/^const BOT_USER_ID = \".*\";/const BOT_USER_ID = \"${BOT_ID}\";/" "${EXT_DIR}/channel.js"
+  sed -i "s/^const BOT_USER_ID = \".*\";/const BOT_USER_ID = \"${BOT_ID}\";/" "${EXT_DIR}/src/channel.js"
   say "Set BOT_USER_ID=${BOT_ID} in channel.js"
 else
   warn "X_USER_ID not found in env; set BOT_USER_ID in channel.js manually or replies may loop."

@@ -1,0 +1,29 @@
+name: Validate (ClawHub dry-run)
+
+# Runs on every PR to catch metadata / entry-point / packaging errors BEFORE they
+# merge to main and auto-release. Never publishes anything.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Dry-run publish (validate only)
+        env:
+          CLAWHUB_AUTH: ${{ secrets.CLAWHUB_TOKEN }}
+        run: clawhub package publish . --family code-plugin --dry-run
