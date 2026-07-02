@@ -9,7 +9,6 @@
 // one wizard behavior not visible in the type). The poller/runtime is untouched.
 import { xDmBase } from "./channel.js";
 import { readXDmEnv, mergeXDmEnv, isXDmConfigured } from "./configured-state.js";
-import { defineBundledChannelSetupEntry } from "openclaw/plugin-sdk/channel-entry-contract";
 
 const CHANNEL = "x-dm";
 
@@ -123,15 +122,3 @@ export const xDmSetupPlugin = {
   setup: xDmBase.setup,
   setupWizard: xDmSetupWizard,
 };
-
-// Onboarding entry. `openclaw.setupEntry` in package.json points at THIS file, and
-// OpenClaw reads this default export. defineBundledChannelSetupEntry is the only
-// setup-entry helper the runtime SDK exports (same one the bundled Discord plugin
-// uses); it loads xDmSetupPlugin lazily via the pointer below. The specifier is
-// self-referential (entry + plugin share this module) so onboarding stays defined
-// inside the plugin's own source rather than a separate root file.
-export default defineBundledChannelSetupEntry({
-  importMetaUrl: import.meta.url,
-  features: {},
-  plugin: { specifier: "./channel.setup.js", exportName: "xDmSetupPlugin" },
-});
