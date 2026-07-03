@@ -7,10 +7,34 @@
 // Each credential/textInput writes ITSELF to the env file via applySet, so we
 // don't depend on the framework threading values into `credentialValues` (the
 // one wizard behavior not visible in the type). The poller/runtime is untouched.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { xDmBase } from "./channel.js";
 import { readXDmEnv, mergeXDmEnv, isXDmConfigured } from "./configured-state.js";
 
 const CHANNEL = "x-dm";
+
+// The allowFrom step resolved entries but the value never reached config on
+// 2026.6.9 (the write path belongs to the dmPolicy-step machinery, which this
+// wizard doesn't define — finalize owns dmPolicy instead). So we stash whatever
+// the framework hands our allowFrom hooks and write it in finalize, whose
+// returned cfg is proven to persist. Self-contained, like the credential steps.
+let _pendingAllowFrom = null;
+
+// Opt-in trace: X_DM_WIZARD_DEBUG=1 openclaw onboard
+// appends one line per hook call to ~/.openclaw/x-dm-wizard-debug.log
+function dbg(msg) {
+  if (!process.env.X_DM_WIZARD_DEBUG) return;
+  try {
+    fs.appendFileSync(
+      path.join(os.homedir(), ".openclaw", "x-dm-wizard-debug.log"),
+      `${new Date().toISOString()} ${msg}\n`
+    );
+  } catch {
+    /* never let tracing break onboarding */
+  }
+}
 
 function patchChannel(cfg, patch) {
   const channels = cfg.channels ?? {};
@@ -90,17 +114,37 @@ export const xDmSetupWizard = {
     message: "Which numeric X user IDs may DM the bot? (comma-separated)",
     placeholder: "1234567890, 9876543210",
     invalidWithoutCredentialNote: "",
-    parseId: (raw) => (/^\d+$/.test(String(raw).trim()) ? String(raw).trim() : null),
-    resolveEntries: async ({ entries }) =>
-      entries.map((e) => {
+    parseId: (raw) => {
+      const id = /^\d+$/.test(String(raw).trim()) ? String(raw).trim() : null;
+      dbg(`allowFrom.parseId(${JSON.stringify(raw)}) -> ${id}`);
+      return id;
+    },
+    resolveEntries: async ({ entries }) => {
+      dbg(`allowFrom.resolveEntries entries=${JSON.stringify(entries)}`);
+      const mapped = entries.map((e) => {
         const ok = /^\d+$/.test(String(e).trim());
         return { input: e, resolved: ok, id: ok ? String(e).trim() : null };
-      }),
-    apply: ({ cfg, allowFrom }) => patchChannel(cfg, { allowFrom }),
+      });
+      const ids = mapped.filter((m) => m.resolved).map((m) => m.id);
+      if (ids.length) _pendingAllowFrom = ids;
+      return mapped;
+    },
+    apply: ({ cfg, accountId, allowFrom }) => {
+      dbg(`allowFrom.apply accountId=${accountId} allowFrom=${JSON.stringify(allowFrom)}`);
+      if (Array.isArray(allowFrom) && allowFrom.length) _pendingAllowFrom = allowFrom;
+      return patchChannel(cfg, { allowFrom });
+    },
   },
-  finalize: async ({ cfg }) => ({
-    cfg: patchChannel(cfg, { enabled: true, dmPolicy: "allowlist" }),
-  }),
+  finalize: async ({ cfg }) => {
+    dbg(`finalize pendingAllowFrom=${JSON.stringify(_pendingAllowFrom)}`);
+    return {
+      cfg: patchChannel(cfg, {
+        enabled: true,
+        dmPolicy: "allowlist",
+        ...(_pendingAllowFrom?.length ? { allowFrom: _pendingAllowFrom } : {}),
+      }),
+    };
+  },
   completionNote: {
     title: "x-dm configured",
     lines: [
