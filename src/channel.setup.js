@@ -49,6 +49,28 @@ function patchChannel(cfg, patch) {
   };
 }
 
+// Factory-built allowFrom prompt (public SDK; mirrors bundled Google Chat).
+// Hoisted so BOTH the dmPolicy step and finalize can drive it: QuickStart
+// onboarding skips the dmPolicy step entirely (SetupChannelsOptions.
+// skipDmPolicyPrompt / quickstartDefaults), so finalize must be able to
+// collect the allowlist itself or QuickStart users end up with an empty one.
+const promptXDmAllowFrom = createPromptParsedAllowFromForAccount({
+  defaultAccountId: () => "default",
+  message: "Which numeric X user IDs may DM the bot? (comma-separated)",
+  placeholder: "1234567890, 9876543210",
+  parseEntries: (raw) => {
+    const entries = mergeAllowFromEntries(void 0, splitSetupEntries(raw));
+    dbg(`allowFrom.parseEntries(${JSON.stringify(raw)}) -> ${JSON.stringify(entries)}`);
+    return { entries };
+  },
+  getExistingAllowFrom: ({ cfg }) => cfg.channels?.[CHANNEL]?.allowFrom ?? [],
+  applyAllowFrom: ({ cfg, accountId, allowFrom }) => {
+    dbg(`allowFrom.applyAllowFrom accountId=${accountId} allowFrom=${JSON.stringify(allowFrom)}`);
+    if (Array.isArray(allowFrom) && allowFrom.length) _pendingAllowFrom = allowFrom;
+    return patchChannel(cfg, { allowFrom });
+  },
+});
+
 // One secret step per OAuth key. inspect() reads the env file so a re-run offers
 // "keep existing"; applySet() writes the resolved value straight back to the file.
 function cred(inputKey, envVar, label) {
@@ -131,37 +153,31 @@ export const xDmSetupWizard = {
       dbg(`dmPolicy.setPolicy policy=${policy}`);
       return patchChannel(cfg, { dmPolicy: policy });
     },
-    promptAllowFrom: createPromptParsedAllowFromForAccount({
-      defaultAccountId: () => "default",
-      message: "Which numeric X user IDs may DM the bot? (comma-separated)",
-      placeholder: "1234567890, 9876543210",
-      parseEntries: (raw) => {
-        const entries = mergeAllowFromEntries(void 0, splitSetupEntries(raw));
-        dbg(`dmPolicy.parseEntries(${JSON.stringify(raw)}) -> ${JSON.stringify(entries)}`);
-        return { entries };
-      },
-      getExistingAllowFrom: ({ cfg }) => cfg.channels?.[CHANNEL]?.allowFrom ?? [],
-      applyAllowFrom: ({ cfg, accountId, allowFrom }) => {
-        dbg(`dmPolicy.applyAllowFrom accountId=${accountId} allowFrom=${JSON.stringify(allowFrom)}`);
-        if (Array.isArray(allowFrom) && allowFrom.length) _pendingAllowFrom = allowFrom;
-        return patchChannel(cfg, { allowFrom });
-      },
-    }),
+    promptAllowFrom: promptXDmAllowFrom,
   },
-  finalize: async ({ cfg }) => {
-    dbg(`finalize pendingAllowFrom=${JSON.stringify(_pendingAllowFrom)}`);
-    const current = cfg.channels?.[CHANNEL] ?? {};
-    return {
-      cfg: patchChannel(cfg, {
-        enabled: true,
-        // default the policy only if the dmPolicy step didn't set one —
-        // never clobber the user's choice
-        ...(current.dmPolicy ? {} : { dmPolicy: "allowlist" }),
-        // belt-and-suspenders: re-assert the allowlist through the one write
-        // path proven to persist, in case upstream threading drops the patch
-        ...(_pendingAllowFrom?.length ? { allowFrom: _pendingAllowFrom } : {}),
-      }),
-    };
+  finalize: async ({ cfg, accountId, prompter, forceAllowFrom }) => {
+    dbg(`finalize forceAllowFrom=${forceAllowFrom} pendingAllowFrom=${JSON.stringify(_pendingAllowFrom)}`);
+    let next = patchChannel(cfg, {
+      enabled: true,
+      ...(cfg.channels?.[CHANNEL]?.dmPolicy ? {} : { dmPolicy: "allowlist" }),
+      ...(_pendingAllowFrom?.length ? { allowFrom: _pendingAllowFrom } : {}),
+    });
+    // QuickStart (and any flow with skipDmPolicyPrompt) never runs the dmPolicy
+    // step, so nothing upstream collects the allowlist. If it's still empty and
+    // we have a prompter, collect it here — otherwise dmPolicy=allowlist drops
+    // every DM and onboarding ends in a footgun warning.
+    const have = next.channels?.[CHANNEL]?.allowFrom;
+    const policy = next.channels?.[CHANNEL]?.dmPolicy;
+    if (policy === "allowlist" && (!Array.isArray(have) || !have.length) && prompter) {
+      try {
+        dbg("finalize: allowFrom empty under allowlist — prompting");
+        next = await promptXDmAllowFrom({ cfg: next, prompter, accountId });
+        dbg(`finalize: post-prompt allowFrom=${JSON.stringify(next.channels?.[CHANNEL]?.allowFrom)}`);
+      } catch (e) {
+        dbg(`finalize: allowFrom prompt failed/cancelled: ${e?.message ?? e}`);
+      }
+    }
+    return { cfg: next };
   },
   completionNote: {
     title: "x-dm configured",
