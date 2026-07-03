@@ -10,6 +10,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  createPromptParsedAllowFromForAccount,
+  splitSetupEntries,
+  mergeAllowFromEntries,
+} from "openclaw/plugin-sdk/setup";
 import { xDmBase } from "./channel.js";
 import { readXDmEnv, mergeXDmEnv, isXDmConfigured } from "./configured-state.js";
 
@@ -110,37 +115,50 @@ export const xDmSetupWizard = {
       },
     },
   ],
-  allowFrom: {
-    message: "Which numeric X user IDs may DM the bot? (comma-separated)",
-    placeholder: "1234567890, 9876543210",
-    invalidWithoutCredentialNote: "",
-    parseId: (raw) => {
-      const id = /^\d+$/.test(String(raw).trim()) ? String(raw).trim() : null;
-      dbg(`allowFrom.parseId(${JSON.stringify(raw)}) -> ${id}`);
-      return id;
+  // The native DM-policy step. This is where onboarding actually writes
+  // allowFrom on 2026.6.9: the dmPolicy machinery owns the policy+allowFrom
+  // patch, and promptAllowFrom (built with the public factory, mirroring the
+  // bundled Google Chat channel) collects and applies the allowlist. Our
+  // previous declarative `allowFrom` section was never driven by this flow
+  // (instrumented run: zero hooks fired).
+  dmPolicy: {
+    label: "X DM",
+    channel: CHANNEL,
+    policyKey: "channels.x-dm.dmPolicy",
+    allowFromKey: "channels.x-dm.allowFrom",
+    getCurrent: (cfg) => cfg.channels?.[CHANNEL]?.dmPolicy ?? "allowlist",
+    setPolicy: (cfg, policy) => {
+      dbg(`dmPolicy.setPolicy policy=${policy}`);
+      return patchChannel(cfg, { dmPolicy: policy });
     },
-    resolveEntries: async ({ entries }) => {
-      dbg(`allowFrom.resolveEntries entries=${JSON.stringify(entries)}`);
-      const mapped = entries.map((e) => {
-        const ok = /^\d+$/.test(String(e).trim());
-        return { input: e, resolved: ok, id: ok ? String(e).trim() : null };
-      });
-      const ids = mapped.filter((m) => m.resolved).map((m) => m.id);
-      if (ids.length) _pendingAllowFrom = ids;
-      return mapped;
-    },
-    apply: ({ cfg, accountId, allowFrom }) => {
-      dbg(`allowFrom.apply accountId=${accountId} allowFrom=${JSON.stringify(allowFrom)}`);
-      if (Array.isArray(allowFrom) && allowFrom.length) _pendingAllowFrom = allowFrom;
-      return patchChannel(cfg, { allowFrom });
-    },
+    promptAllowFrom: createPromptParsedAllowFromForAccount({
+      defaultAccountId: () => "default",
+      message: "Which numeric X user IDs may DM the bot? (comma-separated)",
+      placeholder: "1234567890, 9876543210",
+      parseEntries: (raw) => {
+        const entries = mergeAllowFromEntries(void 0, splitSetupEntries(raw));
+        dbg(`dmPolicy.parseEntries(${JSON.stringify(raw)}) -> ${JSON.stringify(entries)}`);
+        return { entries };
+      },
+      getExistingAllowFrom: ({ cfg }) => cfg.channels?.[CHANNEL]?.allowFrom ?? [],
+      applyAllowFrom: ({ cfg, accountId, allowFrom }) => {
+        dbg(`dmPolicy.applyAllowFrom accountId=${accountId} allowFrom=${JSON.stringify(allowFrom)}`);
+        if (Array.isArray(allowFrom) && allowFrom.length) _pendingAllowFrom = allowFrom;
+        return patchChannel(cfg, { allowFrom });
+      },
+    }),
   },
   finalize: async ({ cfg }) => {
     dbg(`finalize pendingAllowFrom=${JSON.stringify(_pendingAllowFrom)}`);
+    const current = cfg.channels?.[CHANNEL] ?? {};
     return {
       cfg: patchChannel(cfg, {
         enabled: true,
-        dmPolicy: "allowlist",
+        // default the policy only if the dmPolicy step didn't set one —
+        // never clobber the user's choice
+        ...(current.dmPolicy ? {} : { dmPolicy: "allowlist" }),
+        // belt-and-suspenders: re-assert the allowlist through the one write
+        // path proven to persist, in case upstream threading drops the patch
         ...(_pendingAllowFrom?.length ? { allowFrom: _pendingAllowFrom } : {}),
       }),
     };
