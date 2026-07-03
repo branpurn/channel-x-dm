@@ -88,7 +88,7 @@ export const xDmSetupWizard = {
   ],
   allowFrom: {
     message: "Which numeric X user IDs may DM the bot? (comma-separated)",
-    placeholder: "1234567890, 2677902860",
+    placeholder: "1234567890, 9876543210",
     invalidWithoutCredentialNote: "",
     parseId: (raw) => (/^\d+$/.test(String(raw).trim()) ? String(raw).trim() : null),
     resolveEntries: async ({ entries }) =>

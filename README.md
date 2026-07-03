@@ -87,7 +87,7 @@ openclaw logs --follow | grep -iE "x-dm|replied"
     "x-dm": {
       "enabled": true,
       "dmPolicy": "allowlist",
-      "allowFrom": ["2677902860"]   // numeric X user IDs allowed to message the bot
+      "allowFrom": ["1234567890"]   // numeric X user IDs allowed to message the bot
     }
   }
 }
