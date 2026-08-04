@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-x-dm",
+  "name": "@branpurn/x-dm",
   "version": "1.0.0",
   "description": "OpenClaw channel plugin for X (Twitter) Direct Messages",
   "type": "module",
@@ -11,9 +11,22 @@
     "LICENSE"
   ],
   "openclaw": {
-    "extensions": ["./src/index.js"],
-    "compat": { "pluginApi": ">=2026.6.9" },
-    "build": { "openclawVersion": "2026.6.9" }
+    "extensions": [
+      "./src/index.js"
+    ],
+    "setupEntry": "./src/setup-entry.js",
+    "channel": {
+      "id": "x-dm",
+      "label": "X DM",
+      "selectionLabel": "X DM (unencrypted, X API)",
+      "blurb": "Bidirectional X (Twitter) DMs over the paid X API."
+    },
+    "compat": {
+      "pluginApi": ">=2026.6.9"
+    },
+    "build": {
+      "openclawVersion": "2026.6.9"
+    }
   },
-  "dependencies": { "oauth-1.0a": "^2.2.6" }
+  "dependencies": {}
 }

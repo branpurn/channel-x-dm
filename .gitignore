@@ -1,5 +1,6 @@
 node_modules/
 *.tgz
+# secrets + runtime state live in ~/.openclaw, but never let them land in-tree either
 *.env
 x-dm-keys.env
 x-dm-state.json

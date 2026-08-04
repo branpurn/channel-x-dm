@@ -13,7 +13,8 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "dmPolicy": { "type": "string", "enum": ["pairing","allowlist","open","disabled"], "default": "allowlist" },
-          "allowFrom": { "type": "array", "items": { "type": "string" } }
+          "allowFrom": { "type": "array", "items": { "type": "string" } },
+          "groupAllowFrom": { "type": "array", "items": { "type": "string" } }
         },
         "additionalProperties": false
       },
