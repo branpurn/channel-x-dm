@@ -3,31 +3,23 @@
 // npm-install step. Base-string construction verified against Twitter's published
 // OAuth 1.0a test vector.
 import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
+// Single source of truth for env parsing + the required-key list. This module
+// used to carry its own copy of both; they drifted apart by definition since
+// nothing kept them in sync, and this one is the copy that gates activation.
+import { readXDmEnv, X_DM_ENV_PATH, X_DM_REQUIRED_KEYS as REQUIRED } from "./configured-state.js";
 
-const ENV_PATH = `${os.homedir()}/.openclaw/x-dm-keys.env`;
-const REQUIRED = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"];
+const ENV_PATH = X_DM_ENV_PATH;
 
-// Parse the key=value env file. Returns null if it doesn't exist, so importing
-// this module NEVER throws on a fresh install where setup hasn't run yet.
-function loadEnv() {
-  let text;
-  try {
-    text = fs.readFileSync(ENV_PATH, "utf8");
-  } catch {
-    return null;
-  }
-  const k = {};
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (t && !t.startsWith("#") && t.includes("=")) {
-      const i = t.indexOf("=");
-      k[t.slice(0, i).trim()] = t.slice(i + 1).trim();
-    }
-  }
-  return k;
-}
+// Hard ceiling on a single DM. X rejects oversized payloads outright, so both
+// the inbound reply path and the outbound send path truncate here rather than
+// each remembering to do it (they previously disagreed: inbound sliced, the
+// /send path did not, so a long send got a 400 instead of a trimmed message).
+const MAX_DM_CHARS = 9000;
+
+// Network calls must not hang forever: poll() awaits this inline, so one stalled
+// socket would silently freeze the poller for the life of the process. Node's
+// fetch has no default timeout.
+const FETCH_TIMEOUT_MS = 30000;
 
 // Lazily load and cache the credentials from the env file. Returns null until all
 // required keys exist, so the plugin can load and stay dormant before credentials
@@ -36,8 +28,8 @@ function loadEnv() {
 let _creds = null;
 function ensureCreds() {
   if (_creds) return _creds;
-  const k = loadEnv();
-  if (!k || REQUIRED.some((key) => !k[key])) return null;
+  const k = readXDmEnv();
+  if (REQUIRED.some((key) => !k[key])) return null;
   _creds = k;
   return _creds;
 }
@@ -90,7 +82,7 @@ export function isConfigured() {
 
 // Which required keys are still missing (for actionable setup messages).
 export function missingKeys() {
-  const k = loadEnv() ?? {};
+  const k = readXDmEnv();
   return REQUIRED.filter((key) => !k[key]);
 }
 
@@ -114,27 +106,37 @@ async function signedFetch(url, method, body) {
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 }
 
 // Send a DM to a numeric recipient id (creates a conversation if one doesn't exist).
 export async function sendDm(recipientId, text) {
   const url = `https://api.x.com/2/dm_conversations/with/${recipientId}/messages`;
-  const res = await signedFetch(url, "POST", { text });
+  const res = await signedFetch(url, "POST", { text: String(text ?? "").slice(0, MAX_DM_CHARS) });
   if (!res.ok) throw new Error(`sendDm ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
-// Fetch recent DM events. Returns { data, limit, remaining }.
+// Fetch recent DM events. Returns { data, limit, remaining, reset }.
 // Inbound is only visible for UNENCRYPTED conversations (see README).
+//
+// max_results is pinned to the API maximum. A single page is still all we read:
+// with a 15-request/15-minute budget, chasing next_token would spend the very
+// headroom the poller needs, so we buy margin with page size instead. A burst
+// larger than one full page between polls can still be missed.
 export async function fetchDmEvents() {
   const url =
-    "https://api.x.com/2/dm_events?dm_event.fields=id,text,event_type,sender_id,created_at,dm_conversation_id";
+    "https://api.x.com/2/dm_events?max_results=100" +
+    "&dm_event.fields=id,text,event_type,sender_id,created_at,dm_conversation_id";
   const res = await signedFetch(url, "GET");
   if (!res.ok) throw new Error(`fetchDmEvents ${res.status}: ${await res.text()}`);
   return {
     data: await res.json(),
     limit: res.headers.get("x-rate-limit-limit"),
     remaining: res.headers.get("x-rate-limit-remaining"),
+    // Epoch seconds when the window rolls over; lets the poller sleep out a
+    // exhausted budget instead of hammering 429s.
+    reset: res.headers.get("x-rate-limit-reset"),
   };
 }

@@ -5,8 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const ENV_PATH = path.join(os.homedir(), ".openclaw", "x-dm-keys.env");
-const REQUIRED = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"];
+// Exported so client.js shares them rather than keeping a second copy that can
+// silently drift out of sync with this one.
+export const X_DM_ENV_PATH = path.join(os.homedir(), ".openclaw", "x-dm-keys.env");
+export const X_DM_REQUIRED_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"];
+
+const ENV_PATH = X_DM_ENV_PATH;
+const REQUIRED = X_DM_REQUIRED_KEYS;
 
 // Parse the KEY=value env file. Returns {} if it doesn't exist (never throws).
 export function readXDmEnv() {

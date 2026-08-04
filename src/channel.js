@@ -8,9 +8,18 @@ import { sendDm, fetchDmEvents, isConfigured as credsReady, botUserId, missingKe
 const CHANNEL_ID = "x-dm";
 const STATE_FILE = `${os.homedir()}/.openclaw/x-dm-state.json`;
 
-const IDLE_MS = 300000;          // 5 min when quiet
-const ACTIVE_MS = 30000;         // 30 s during a live conversation
+// Poll cadence is bounded by the X API budget, not by how responsive we'd like
+// to be. Observed on GET /2/dm_events: 15 requests per 15-minute window (the
+// x-rate-limit-* headers decrement by 1 per poll and reset on the quarter hour).
+// That is one request per 60s sustained. The old 30s active cadence was exactly
+// 2x over budget, so a live conversation — the moment responsiveness matters —
+// burned the window and then ate 429s until it rolled over.
+const IDLE_MS = 300000;          // 5 min when quiet (3 req/window)
+const ACTIVE_MS = 90000;         // 90 s during a live conversation (10 req/window)
 const ACTIVE_WINDOW_MS = 180000; // stay "active" 3 min after last inbound
+// Below this many remaining requests, stop polling until the window resets
+// rather than spending the last of the budget and failing closed.
+const RATE_LIMIT_FLOOR = 2;
 
 // --- persistent dedup marker (survives restarts/reboots) ---
 // Semantics: at-least-once on the read side, drop-on-error on dispatch.
@@ -90,7 +99,10 @@ async function dispatchInbound(ctx, account, e) {
     adapter: {
       ingest: (msg) => ({
         id: msg.id,
-        timestamp: Date.now(),
+        // Prefer the event's own created_at: polling can lag a send by a full
+        // idle interval, and stamping at ingest time skewed every message by up
+        // to 5 minutes. Falls back to now if X omits or malforms the field.
+        timestamp: Date.parse(msg.created_at ?? "") || Date.now(),
         rawText: msg.text,
         textForAgent: msg.text,
         textForCommands: msg.text,
@@ -137,7 +149,7 @@ async function dispatchInbound(ctx, account, e) {
             deliver: async (payload) => {
               const text = payload?.text;
               if (!text) return { visibleReplySent: false };
-              await sendDm(from, String(text).slice(0, 9000));
+              await sendDm(from, text); // sendDm enforces the length ceiling
               log.info?.(`x-dm: replied to ${from}`);
               return { visibleReplySent: true };
             },
@@ -166,6 +178,27 @@ export const xDmBase = {
       effects: false, blockStreaming: false,
     },
     reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
+    // Doctor behavior descriptor. Declares that this DM-only channel
+    // (capabilities.chatTypes: ["direct"]) has no group surface, so doctor
+    // should not synthesize a group allowlist for it.
+    //
+    // NOTE: inert on OpenClaw 2026.7.1-2 — verified empirically, not assumed.
+    // getDoctorChannelCapabilities() resolves via getManifestDoctorCapabilities
+    // (filters origin:"bundled") and then normalizeAnyChannelId (plugin
+    // registry), neither of which sees an externally-installed channel while
+    // maybeRepairGroupAllowFromFallback runs. It therefore returns
+    // DEFAULT_DOCTOR_CHANNEL_CAPABILITIES (fallback: true) and copies
+    // channels.x-dm.allowFrom into groupAllowFrom on every `doctor --fix`.
+    // Confirmed to hit @openclaw/signal identically, so it is an upstream gap,
+    // not specific to this plugin. Deleting the key cannot win: the repair
+    // skips only on a NON-EMPTY value, so an absent key re-arms it every run.
+    // The written key is harmless here — nothing in src/ reads groupAllowFrom —
+    // so we let it stand rather than churn. Kept because it is correct and will
+    // take effect once the capability lookup reaches external plugins.
+    doctor: {
+      groupAllowFromFallbackToAllowFrom: false,
+      warnOnEmptyGroupSenderAllowlist: false,
+    },
     setup: { applyAccountConfig: (cfg) => cfg },
     config: {
       listAccountIds: listXAccountIds,
@@ -216,21 +249,53 @@ export const xDmBase = {
         const account = resolveXAccount(ctx.cfg, ctx.accountId);
         const botId = botUserId();
 
-        let lastSeenEventId = loadLastSeen();
+        // Without X_USER_ID we cannot tell our own sends apart from inbound, so
+        // every reply we make is re-ingested as a new message and answered again
+        // — an unbounded loop against a paid API. This used to warn and carry on;
+        // staying dormant is the only safe response, and it matches the
+        // not-configured path above (fix credentials, restart, done).
         if (!botId) {
-          log.warn?.("x-dm: X_USER_ID not set in ~/.openclaw/x-dm-keys.env — loop protection is DISABLED (the bot can reply to its own messages). Set X_USER_ID and restart.");
+          log.error?.(
+            "x-dm: X_USER_ID is not set in ~/.openclaw/x-dm-keys.env — without it the bot cannot " +
+              "recognize its own messages and would reply to itself in a loop. Staying dormant. " +
+              "Add X_USER_ID (the bot's numeric id) and restart the gateway."
+          );
+          await awaitAbort();
+          return;
         }
+
+        let lastSeenEventId = loadLastSeen();
         log.info?.(`x-dm: startAccount — adaptive poller (lastSeen=${lastSeenEventId ?? "none"})`);
 
         let lastInboundAt = 0;
         let stopped = false;
+        // Set when the API budget is spent; poll() hands the loop a deadline to
+        // sleep to instead of its normal cadence.
+        let rateLimitResumeAt = 0;
 
         const newestId = (arr) =>
           arr.reduce((max, e) => (max === null || idGreater(e.id, max) ? e.id : max), null);
 
         const poll = async () => {
           try {
-            const { data, limit, remaining } = await fetchDmEvents();
+            const { data, limit, remaining, reset } = await fetchDmEvents();
+
+            // Park until the window rolls over if we're down to the last of the
+            // budget. Falls back to one idle interval when the reset header is
+            // missing or nonsensical.
+            const remainingNum = Number(remaining);
+            if (Number.isFinite(remainingNum) && remainingNum <= RATE_LIMIT_FLOOR) {
+              const resetMs = Number(reset) * 1000;
+              const until =
+                Number.isFinite(resetMs) && resetMs > Date.now() ? resetMs : Date.now() + IDLE_MS;
+              rateLimitResumeAt = until;
+              log.warn?.(
+                `x-dm: rate limit nearly exhausted (${remaining}/${limit}) — pausing ${Math.ceil(
+                  (until - Date.now()) / 1000
+                )}s until window reset`
+              );
+            }
+
             const all = data?.data ?? [];
             const msgs = all.filter((e) => e.event_type === "MessageCreate");
 
@@ -259,7 +324,7 @@ export const xDmBase = {
               if (idGreater(e.id, newMarker)) newMarker = e.id;
               if (botId && String(e.sender_id) === botId) continue; // skip own sends
               gotInbound = true;
-              log.info?.(`x-dm: inbound from ${e.sender_id}: ${String(e.text).slice(0, 40)}`);
+              log.info?.(`x-dm: inbound from ${e.sender_id}: ${String(e.text ?? "").slice(0, 40)}`);
               try {
                 await dispatchInbound(ctx, account, e);
               } catch (err) {
@@ -279,16 +344,34 @@ export const xDmBase = {
           }
         };
 
+        // Interruptible sleep. The abort listener MUST be removed on the normal
+        // timeout path: { once: true } only detaches after the event fires, and
+        // abort doesn't fire during normal operation — so the previous version
+        // leaked one listener per poll onto a signal that lives as long as the
+        // process (~120/hour while active) until Node warned about it.
+        const sleep = (ms) =>
+          new Promise((resolve) => {
+            const sig = ctx?.abortSignal;
+            let timer;
+            const onAbort = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+            timer = setTimeout(() => {
+              sig?.removeEventListener?.("abort", onAbort);
+              resolve();
+            }, ms);
+            sig?.addEventListener?.("abort", onAbort, { once: true });
+          });
+
         const loop = async () => {
           while (!stopped) {
             await poll();
             const active = Date.now() - lastInboundAt < ACTIVE_WINDOW_MS;
             const wait = active ? ACTIVE_MS : IDLE_MS;
-            await new Promise((r) => {
-              const t = setTimeout(r, wait);
-              const sig = ctx?.abortSignal;
-              sig?.addEventListener?.("abort", () => { clearTimeout(t); r(); }, { once: true });
-            });
+            // A rate-limit pause outranks the normal cadence.
+            const untilReset = rateLimitResumeAt - Date.now();
+            await sleep(Math.max(wait, untilReset > 0 ? untilReset : 0));
           }
         };
 
