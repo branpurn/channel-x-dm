@@ -4,6 +4,19 @@ Use legacy **unencrypted** X (Twitter) Direct Messages as a bidirectional channe
 
 Send **and** receive both work. The one hard requirement is that the bot account must never have set an X Chat PIN — see prerequisites.
 
+> **1-on-1 only. Group chats do not work and cannot be made to work.**
+> X group chats never appear in the v2 DM API, even with the bot account a
+> member of the group and a message present in it — `GET /2/dm_events` (which
+> returns every conversation the bot participates in) shows only 1-on-1 threads,
+> and querying the group's id directly returns `Could not find dm_conversation`.
+> Verified 2026-08-04 against a live group. This is not a gap in this plugin;
+> there is nothing to read.
+>
+> Incidentally, the API's own id-validation regex is
+> `^([0-9]{1,19}-[0-9]{1,19}|[0-9]{15,19})$` — so a `dm_conversation_id` is
+> either `digits-digits` (1-on-1) or plain 15–19 digits (group). The `g` prefix
+> in `x.com/i/chat/g…` is a UI artifact, not part of the API id.
+
 ## Prerequisites
 
 - **A dedicated X account for the agent that has *never* set an X Chat PIN.** Non-negotiable. X end-to-end-encrypts DMs once both parties enroll (set a PIN), and the API is blind to encrypted messages. A no-PIN bot account keeps every conversation unencrypted and therefore API-readable — even when the human you're talking to has E2E enabled. Never open the Chat tab in a way that enrolls it.
