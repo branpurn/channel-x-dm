@@ -1,7 +1,7 @@
 {
   "id": "x-dm",
   "name": "X DM",
-  "description": "Send and receive X (Twitter) Direct Messages via the X API.",
+  "description": "Send and receive X Direct Messages via the X API (classic unencrypted DM, plus opt-in X Chat).",
   "activation": { "onStartup": true },
   "channels": ["x-dm"],
   "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
@@ -12,6 +12,7 @@
         "type": "object",
         "properties": {
           "enabled": { "type": "boolean" },
+          "transport": { "type": "string", "enum": ["classic","chat"], "default": "classic" },
           "dmPolicy": { "type": "string", "enum": ["pairing","allowlist","open","disabled"], "default": "allowlist" },
           "allowFrom": { "type": "array", "items": { "type": "string" } },
           "groupAllowFrom": { "type": "array", "items": { "type": "string" } }
@@ -19,7 +20,7 @@
         "additionalProperties": false
       },
       "label": "X DM",
-      "description": "X (Twitter) Direct Messages via the X API (adaptive polling inbound)."
+      "description": "X Direct Messages via the X API. transport=classic (default, unencrypted DM) or transport=chat (opt-in X Chat API)."
     }
   }
 }
