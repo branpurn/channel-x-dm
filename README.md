@@ -1,8 +1,17 @@
-# X DM (Unencrypted) Channel for OpenClaw
+# X DM Channel for OpenClaw
 
-Use legacy **unencrypted** X (Twitter) Direct Messages as a bidirectional channel for [OpenClaw](https://docs.openclaw.ai). Talk to your agent over X DMs. Uses the paid X API (not free).
+Use X (Twitter) Direct Messages as a bidirectional channel for [OpenClaw](https://docs.openclaw.ai). Talk to your agent over X DMs. Uses the paid X API (not free).
 
-Send **and** receive both work. The one hard requirement is that the bot account must never have set an X Chat PIN — see prerequisites.
+Two **parallel transports** share one channel (`x-dm`), one allowlist, and one agent binding:
+
+| Transport | API | Default | Bot account |
+|-----------|-----|---------|-------------|
+| **classic** | Unencrypted DM (`/2/dm_events`, `/2/dm_conversations/…`) | **yes** (until Chat is validated) | Must **never** set an X Chat PIN |
+| **chat** | X Chat (`/2/chat/conversations`, encrypted via [chat-xdk](https://github.com/xdevplatform/chat-xdk)) | opt-in | Must **enroll** (public key + Juicebox PIN) |
+
+Pick one transport **per bot account**. Chat enrollment encrypts the inbox and blinds classic inbound. Flip `channels.x-dm.transport` (or `DEFAULT_TRANSPORT` in `src/transport.js`) to `chat` once the Chat path is validated.
+
+Send **and** receive both work on either transport.
 
 > **1-on-1 only. Group chats do not work and cannot be made to work.**
 > X group chats never appear in the v2 DM API, even with the bot account a
@@ -19,11 +28,13 @@ Send **and** receive both work. The one hard requirement is that the bot account
 
 ## Prerequisites
 
-- **A dedicated X account for the agent that has *never* set an X Chat PIN.** Non-negotiable. X end-to-end-encrypts DMs once both parties enroll (set a PIN), and the API is blind to encrypted messages. A no-PIN bot account keeps every conversation unencrypted and therefore API-readable — even when the human you're talking to has E2E enabled. Never open the Chat tab in a way that enrolls it.
-- **Willingness to pay-as-you-go for the X API.** Pay-per-use, no subscription. Roughly: DM send ≈ $0.015, owned read (poll) ≈ $0.001. With the adaptive poller (5 min idle, 30 s during active chats), idle cost is ~$0.09/day; real usage is pennies.
+- **A dedicated X account for the agent.**
+  - **classic:** the account must *never* have set an X Chat PIN. X end-to-end-encrypts DMs once both parties enroll, and `dm_events` is blind to encrypted messages. A no-PIN bot keeps every thread unencrypted and API-readable — even when the human has E2E enabled. Never open the Chat tab in a way that enrolls it.
+  - **chat:** the opposite. Register a public key and store the identity in Juicebox under `X_CHAT_PIN` (`node tools/x-chat-register.mjs --confirm`). That enrollment is what makes Chat decryptable, and it turns classic inbound dark on that account.
+- **Willingness to pay-as-you-go for the X API.** Pay-per-use, no subscription. Roughly: DM send ≈ $0.015, owned read (poll) ≈ $0.001. With the adaptive poller (5 min idle, 90 s during active chats), idle cost is ~$0.09/day; real usage is pennies.
 - **OpenClaw 2026.6.x** (built against `2026.6.9`).
-- **Node** — the plugin is pure JavaScript with **no external dependencies** (OAuth 1.0a is signed inline with `node:crypto`), so there's nothing to `npm install`.
-- An X developer app on **pay-per-use** with **Read + Write + Direct Messages** permission, and **OAuth 1.0a** keys generated *after* setting that permission. You'll need the four keys plus the bot's numeric user ID.
+- **Node** — classic is pure JavaScript with **no required dependencies** (OAuth 1.0a is signed inline with `node:crypto`). The Chat transport optionally needs `@xdevplatform/chat-xdk` and `juicebox-sdk` (`npm install` in the plugin directory).
+- An X developer app on **pay-per-use** with **Read + Write + Direct Messages** permission, and **OAuth 1.0a** keys generated *after* setting that permission. You'll need the four keys plus the bot's numeric user ID. Chat can also use an optional OAuth 2.0 user-context token (`X_OAUTH2_ACCESS_TOKEN`, scopes `dm.read` + `dm.write`).
 
 ## Install
 
@@ -60,7 +71,7 @@ openclaw gateway restart
 openclaw onboard
 ```
 
-Pick **X DM** in the channel list and follow the wizard. It prompts for your four X OAuth 1.0a keys **and the bot's numeric user ID**, writing them to `~/.openclaw/x-dm-keys.env` (chmod 600), then prompts for the allowlist and writes `channels.x-dm`. The env file is the single source of truth — the bot's id is read from `X_USER_ID` at runtime for loop protection, so **`openclaw plugins update` never clobbers your config.** Re-run `openclaw onboard` any time to reconfigure.
+Pick **X DM** in the channel list and follow the wizard. It prompts for your four X OAuth 1.0a keys **and the bot's numeric user ID**, writing them to `~/.openclaw/x-dm-keys.env` (chmod 600), then the transport (`classic` default, or `chat`), optional Chat PIN / OAuth2 token, the allowlist, and `channels.x-dm`. The env file is the single source of truth — the bot's id is read from `X_USER_ID` at runtime for loop protection, so **`openclaw plugins update` never clobbers your config.** Re-run `openclaw onboard` any time to reconfigure.
 
 You'll need an X developer app on **pay-per-use** with **Read + Write + Direct Messages** permission, and **OAuth 1.0a** keys generated *after* setting that permission.
 
@@ -99,6 +110,7 @@ openclaw logs --follow | grep -iE "x-dm|replied"
   "channels": {
     "x-dm": {
       "enabled": true,
+      "transport": "classic",       // "classic" (default) | "chat" (opt-in X Chat API)
       "dmPolicy": "allowlist",
       "allowFrom": ["1234567890"]   // numeric X user IDs allowed to message the bot
     }
@@ -106,7 +118,32 @@ openclaw logs --follow | grep -iE "x-dm|replied"
 }
 ```
 
-`allowFrom` filters on the **sender's numeric user ID** (not @handle). The bot's own id (for skipping its own sends) is **not** configured here — it comes from `X_USER_ID` in `~/.openclaw/x-dm-keys.env`. If `X_USER_ID` is unset, the plugin logs a warning at startup and loop protection is disabled.
+`allowFrom` filters on the **sender's numeric user ID** (not @handle). The bot's own id (for skipping its own sends) is **not** configured here — it comes from `X_USER_ID` in `~/.openclaw/x-dm-keys.env`. If `X_USER_ID` is unset, the plugin stays dormant (loop protection cannot work).
+
+`transport` can also be set as `X_DM_TRANSPORT` in the env file. Channel config wins when both are present.
+
+### Opt-in: X Chat transport
+
+Classic stays the default until this path is validated. To try Chat on a **dedicated** bot account:
+
+1. `npm install` in the plugin directory (pulls optional `@xdevplatform/chat-xdk` + `juicebox-sdk`).
+2. Set `X_CHAT_PIN` in `~/.openclaw/x-dm-keys.env` (4+ characters; not `0000` / `1234` / `4321`).
+3. Register the bot identity once (rate-limited, a few writes / 24h):
+
+```bash
+node tools/x-chat-register.mjs --confirm
+```
+
+4. Set `channels.x-dm.transport` to `chat` (or `X_DM_TRANSPORT=chat`) and restart the gateway.
+5. Confirm inbound:
+
+```bash
+node tools/x-chat-read.mjs <allowlisted-user-id>
+```
+
+Optional: `X_OAUTH2_ACCESS_TOKEN` (OAuth 2.0 user-context, `dm.read` + `dm.write`). If unset, Chat calls use the same OAuth 1.0a user context as classic.
+
+When Chat is the supported default, change `DEFAULT_TRANSPORT` in `src/transport.js` and the schema default in `openclaw.plugin.json` from `classic` to `chat`.
 
 ### Recommended: sandbox to a low-privilege agent
 
@@ -123,21 +160,34 @@ If the same OpenClaw installation also uses [TweetClaw](https://github.com/Xquik
 
 ## How it works
 
+Shared: allowlist / `dmPolicy`, `X_USER_ID` loop guard, drop-on-dispatch-error, adaptive idle/active cadence (5 min idle → 90 s for 3 min after inbound).
+
+**classic (default)**
+
 - **Outbound:** `POST /2/dm_conversations/with/{id}/messages`.
-- **Inbound:** an adaptive poller on `GET /2/dm_events` (5 min idle → 30 s for 3 min after each message) feeds the native `channelRuntime.inbound.run(...)` dispatch, which routes to the bound agent and replies via the same send path.
-- **Rate limit:** `dm_events` is 15 req / 15 min. The adaptive poller stays well under it and only polls fast during live conversations.
-- **Loop guard:** events whose `sender_id` equals `X_USER_ID` are skipped, so the bot never replies to itself.
-- **Dedup:** `lastSeenEventId` is persisted to `~/.openclaw/x-dm-state.json` (atomic writes, BigInt-compared) so restarts/reboots resume instead of replaying the poll window. See `ISSUE.md`.
+- **Inbound:** adaptive poller on `GET /2/dm_events` feeds `channelRuntime.inbound.run(...)`.
+- **Rate limit:** `dm_events` is 15 req / 15 min.
+- **Dedup:** `lastSeenEventId` in `~/.openclaw/x-dm-state.json` (atomic writes, BigInt-compared). See `ISSUE.md`.
 
-## The encryption gotcha (why no-PIN matters)
+**chat (opt-in)**
 
-As of 2026 X replaced DMs with "Chat" and rolls out E2E encryption. A conversation encrypts **only when both participants have enrolled** (set a 4-digit PIN). Encrypted messages do **not** appear in the `dm_events` API — the endpoint returns 200 with only your own sent messages, silently omitting inbound. A bot account that never sets a PIN can't hold encryption keys, so every thread it's in stays unencrypted and fully API-readable, regardless of the other party's settings. If inbound ever goes dark, check that the bot didn't get PIN-enrolled.
+- **Outbound:** encrypt + sign with chat-xdk, then `POST /2/chat/conversations/{id}/messages`. Initializes conversation keys (`POST …/keys`) on first send to a peer.
+- **Inbound:** poll each allowlisted 1:1 (`GET /2/chat/conversations/{id}/events`). Under `pairing` / `open`, also lists `GET /2/chat/conversations` so unknown senders can pair. Groups (`g…`) are skipped — still 1-on-1 only.
+- **Keys:** unlock the bot identity from Juicebox with `X_CHAT_PIN`; batch-decrypt `meta.conversation_key_events` so message decrypt can succeed.
+- **Dedup:** per-peer `lastSeenEventId` in `~/.openclaw/x-chat-state.json`. First poll seeds and ignores backlog, same as classic.
+
+## The encryption gotcha (why the two transports cannot share an account)
+
+As of 2026 X replaced DMs with "Chat" and rolls out E2E encryption. A conversation encrypts **only when both participants have enrolled** (set a PIN / registered a public key).
+
+- **classic** reads `dm_events`. Encrypted messages do **not** appear there — the endpoint returns 200 with only your own sent messages, silently omitting inbound. A bot that never enrolls can't hold encryption keys, so every thread it's in stays unencrypted and API-readable. If classic inbound goes dark, the bot was PIN-enrolled.
+- **chat** is the enrolled path: the plugin holds the identity (Juicebox + `X_CHAT_PIN`) and decrypts `/2/chat/conversations/{id}/events` with chat-xdk. That is the new API (public keys, conversation keys, encrypted send). It is opt-in until validated; then it becomes the default.
 
 ## Risks
 
 - **Account standing.** Automated DMs are X's riskiest write op. Intended for messaging between accounts that know each other. Don't spam strangers — that's the ban vector, and it's on you. Use a dedicated bot account.
 - **Cost.** Per-call billing; a runaway poll loop costs budget. The adaptive poller mitigates this; don't restart in a loop.
-- **Credentials.** Keys in `~/.openclaw/x-dm-keys.env`, chmod 600, gitignored. Never commit them.
+- **Credentials.** Keys (and the Chat PIN) in `~/.openclaw/x-dm-keys.env`, chmod 600, gitignored. Never commit them. Juicebox recovery is PIN-guess-limited — a wrong `X_CHAT_PIN` can lock the identity.
 - **Untrusted inbound.** Use the low-priv-agent binding above.
 
 ## Files
@@ -150,14 +200,25 @@ channel-x-dm/
 ├── LICENSE               # MIT
 ├── openclaw.plugin.json
 ├── package.json
-├── setup-entry.js        # lightweight onboarding entry (defineSetupPluginEntry)
 ├── src/
 │   ├── index.js          # plugin entry (registers the runtime channel)
-│   ├── channel.js        # runtime: adaptive poller, dispatch, xDmBase
-│   ├── client.js         # X API (OAuth 1.0a); lazy, non-throwing cred load
+│   ├── setup-entry.js    # onboarding entry (defineBundledChannelSetupEntry)
+│   ├── channel.js        # xDmBase + transport switch (classic default)
+│   ├── transport.js      # DEFAULT_TRANSPORT + resolveTransport
+│   ├── classic-transport.js  # unencrypted DM poller
+│   ├── chat-transport.js # X Chat poller (opt-in)
+│   ├── client.js         # classic DM API
+│   ├── chat-client.js    # /2/chat/* + public_keys HTTP
+│   ├── chat-crypto.js    # lazy chat-xdk / Juicebox session
+│   ├── chat-pin.js       # PIN strength rules (shared with onboard)
+│   ├── oauth.js          # OAuth 1.0a + optional OAuth2 fetch
+│   ├── ids.js            # user / conversation id helpers
+│   ├── dispatch.js       # shared inbound.run adapter
+│   ├── poll-utils.js     # interruptible sleep + atomic state
 │   ├── channel.setup.js  # onboarding wizard + setup plugin
 │   └── configured-state.js  # env-file read/merge/check helpers
-└── tools/{x-dm-test,x-dm-read}.py
+├── test/*.test.js
+└── tools/{x-dm-test,x-dm-read}.py + {x-chat-register,x-chat-read}.mjs
 ```
 
 Unofficial, not affiliated with X Corp or Anthropic. MIT licensed.

@@ -9,6 +9,10 @@ import path from "node:path";
 // silently drift out of sync with this one.
 export const X_DM_ENV_PATH = path.join(os.homedir(), ".openclaw", "x-dm-keys.env");
 export const X_DM_REQUIRED_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"];
+// Chat-only. Not required for classic DM. A PIN enrolls the bot in X Chat
+// (Juicebox key storage) and is incompatible with classic inbound on the
+// same account — see README.
+export const X_CHAT_OPTIONAL_KEYS = ["X_CHAT_PIN", "X_OAUTH2_ACCESS_TOKEN", "X_CHAT_SIGNING_KEY_VERSION", "X_DM_TRANSPORT"];
 
 const ENV_PATH = X_DM_ENV_PATH;
 const REQUIRED = X_DM_REQUIRED_KEYS;

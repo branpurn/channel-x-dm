@@ -2,7 +2,7 @@
 #
 # setup.sh — install the x-dm channel into OpenClaw.
 # Copies the plugin, installs deps, collects OAuth 1.0a keys (chmod 600 env),
-# sets the bot's numeric ID into channel.js, registers config, restarts, verifies.
+# writes keys to the env file, registers config, restarts, verifies.
 # Safe to re-run. Does NOT echo secrets. Does NOT commit anything.
 #
 set -euo pipefail
@@ -52,13 +52,11 @@ EOF2
   say "Credentials written (chmod 600)."
 fi
 
-# Patch BOT_USER_ID into channel.js from the env file (skips bot's own sends)
 BOT_ID="$(grep '^X_USER_ID=' "${ENV_FILE}" | cut -d= -f2- | tr -d '[:space:]')"
 if [[ -n "${BOT_ID}" ]]; then
-  sed -i "s/^const BOT_USER_ID = \".*\";/const BOT_USER_ID = \"${BOT_ID}\";/" "${EXT_DIR}/src/channel.js"
-  say "Set BOT_USER_ID=${BOT_ID} in channel.js"
+  say "X_USER_ID=${BOT_ID} (loop protection reads the env file; nothing is patched into source)"
 else
-  warn "X_USER_ID not found in env; set BOT_USER_ID in channel.js manually or replies may loop."
+  warn "X_USER_ID not found in env — the plugin will stay dormant until you add it."
 fi
 
 # Allowlist

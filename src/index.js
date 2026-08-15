@@ -4,7 +4,7 @@ import { xDmPlugin } from "./channel.js";
 const plugin = {
   id: "x-dm",
   name: "X DM",
-  description: "X (Twitter) Direct Message channel",
+  description: "X Direct Message channel (classic DM + opt-in X Chat)",
   register(api) {
     api.registerChannel({ plugin: xDmPlugin });
   },

@@ -22,7 +22,7 @@ A secondary effect: turns whose compaction failed mid-flight (separate issue) le
 
 ## Fix
 
-Persist the dedup marker to disk and seed it correctly on first run. Implemented in `src/channel.js`:
+Persist the dedup marker to disk and seed it correctly on first run. Implemented in `src/classic-transport.js` (Chat uses the same seed/drop-on-error rules per peer in `src/chat-transport.js`):
 
 - **Disk-persisted `lastSeenEventId`** in `~/.openclaw/x-dm-state.json`, loaded on `startAccount`, so restarts/reboots resume from the last handled event instead of replaying the window.
 - **First-run seeding:** with no prior state, adopt the newest current event as the marker and dispatch nothing (ignore backlog) — so a fresh install/reboot never replays pre-existing history.

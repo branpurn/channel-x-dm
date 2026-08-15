@@ -2,7 +2,7 @@
 //
 // Persistence split, matching what the runtime reads:
 //   • the 4 OAuth keys + X_USER_ID  -> ~/.openclaw/x-dm-keys.env  (client.js reads this)
-//   • enabled / dmPolicy / allowFrom -> channels.x-dm.*           (channel.js reads this)
+//   • enabled / transport / dmPolicy / allowFrom -> channels.x-dm.*  (channel.js reads this)
 //
 // Each credential/textInput writes ITSELF to the env file via applySet, so we
 // don't depend on the framework threading values into `credentialValues` (the
@@ -17,6 +17,8 @@ import {
 } from "openclaw/plugin-sdk/setup";
 import { xDmBase } from "./channel.js";
 import { readXDmEnv, mergeXDmEnv, isXDmConfigured } from "./configured-state.js";
+import { DEFAULT_TRANSPORT, normalizeTransport } from "./transport.js";
+import { weakPinReason } from "./chat-pin.js";
 
 const CHANNEL = "x-dm";
 
@@ -104,9 +106,11 @@ export const xDmSetupWizard = {
     resolveConfigured: () => isXDmConfigured(),
   },
   introNote: {
-    title: "X DM (unencrypted) — setup",
+    title: "X DM — setup",
     lines: [
-      "Uses the paid X API (OAuth 1.0a). The bot account must NEVER have set an X Chat PIN, or inbound goes E2E-dark.",
+      "Two transports share this channel. Default is classic (unencrypted DM API). Chat is opt-in until validated.",
+      "classic: the bot account must NEVER have set an X Chat PIN, or inbound goes E2E-dark.",
+      "chat: enrolls the bot (public key + Juicebox PIN) via the new X Chat API. That enrollment breaks classic inbound on the same account.",
       "You'll provide 4 OAuth keys + the bot's numeric user id. They're written to ~/.openclaw/x-dm-keys.env (chmod 600).",
     ],
   },
@@ -136,6 +140,68 @@ export const xDmSetupWizard = {
         return cfg;
       },
     },
+    {
+      inputKey: "transport",
+      message: `Message transport: classic (unencrypted DM API, default) or chat (new X Chat API). Default is ${DEFAULT_TRANSPORT}.`,
+      placeholder: DEFAULT_TRANSPORT,
+      required: false,
+      helpTitle: "classic vs chat",
+      helpLines: [
+        "classic uses GET /2/dm_events and POST /2/dm_conversations/with/{id}/messages. Keep this until Chat is validated.",
+        "chat uses GET /2/chat/conversations and the chat-xdk. Requires X_CHAT_PIN and a one-time public-key registration (tools/x-chat-register.mjs).",
+        "Do not run both on the same bot account: Chat enrollment encrypts the inbox and blinds classic inbound.",
+      ],
+      currentValue: () => readXDmEnv().X_DM_TRANSPORT || DEFAULT_TRANSPORT,
+      validate: ({ value }) => {
+        if (value == null || String(value).trim() === "") return undefined;
+        const v = String(value).trim().toLowerCase();
+        return v === "classic" || v === "chat" ? undefined : "Must be classic or chat.";
+      },
+      applySet: ({ cfg, value }) => {
+        if (value == null || String(value).trim() === "") return cfg;
+        const transport = normalizeTransport(value);
+        mergeXDmEnv({ X_DM_TRANSPORT: transport });
+        return patchChannel(cfg, { transport });
+      },
+    },
+    {
+      inputKey: "chatPin",
+      message: "X Chat PIN (X_CHAT_PIN) — only for transport=chat; leave blank for classic",
+      placeholder: "(optional)",
+      required: false,
+      helpTitle: "X Chat PIN",
+      helpLines: [
+        "Juicebox recovery PIN for the bot identity. Required to unlock Chat keys.",
+        "At least 4 characters; not a repeated character or a sequential digit run (1234 / 4321).",
+        "After saving, run: node tools/x-chat-register.mjs --confirm",
+      ],
+      currentValue: () => readXDmEnv().X_CHAT_PIN,
+      validate: ({ value }) => {
+        if (value == null || String(value).trim() === "") return undefined;
+        const reason = weakPinReason(String(value).trim());
+        return reason ? `PIN ${reason}` : undefined;
+      },
+      applySet: ({ cfg, value }) => {
+        if (value) mergeXDmEnv({ X_CHAT_PIN: String(value).trim() });
+        return cfg;
+      },
+    },
+    {
+      inputKey: "oauth2Token",
+      message: "Optional OAuth 2.0 user access token (X_OAUTH2_ACCESS_TOKEN) for Chat — leave blank to use OAuth 1.0a",
+      placeholder: "(optional)",
+      required: false,
+      helpTitle: "OAuth 2.0 user token",
+      helpLines: [
+        "Official Chat examples use an OAuth 2.0 user-context token with dm.read + dm.write.",
+        "If unset, Chat calls use the same OAuth 1.0a user context as classic DMs.",
+      ],
+      currentValue: () => readXDmEnv().X_OAUTH2_ACCESS_TOKEN,
+      applySet: ({ cfg, value }) => {
+        if (value) mergeXDmEnv({ X_OAUTH2_ACCESS_TOKEN: String(value).trim() });
+        return cfg;
+      },
+    },
   ],
   // The native DM-policy step. This is where onboarding actually writes
   // allowFrom on 2026.6.9: the dmPolicy machinery owns the policy+allowFrom
@@ -160,6 +226,7 @@ export const xDmSetupWizard = {
     let next = patchChannel(cfg, {
       enabled: true,
       ...(cfg.channels?.[CHANNEL]?.dmPolicy ? {} : { dmPolicy: "allowlist" }),
+      ...(cfg.channels?.[CHANNEL]?.transport ? {} : { transport: DEFAULT_TRANSPORT }),
       ...(_pendingAllowFrom?.length ? { allowFrom: _pendingAllowFrom } : {}),
     });
     // QuickStart (and any flow with skipDmPolicyPrompt) never runs the dmPolicy
@@ -183,6 +250,7 @@ export const xDmSetupWizard = {
     title: "x-dm configured",
     lines: [
       "Credentials saved to ~/.openclaw/x-dm-keys.env; channel config written.",
+      "Default transport is classic. To try X Chat: set channels.x-dm.transport=chat, install @xdevplatform/chat-xdk + juicebox-sdk, run tools/x-chat-register.mjs --confirm, then restart.",
       "If the channel doesn't come up: openclaw plugins enable x-dm && openclaw gateway restart",
     ],
   },

@@ -4,3 +4,5 @@ node_modules/
 *.env
 x-dm-keys.env
 x-dm-state.json
+x-chat-state.json
+x-chat-register.json

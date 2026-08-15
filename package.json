@@ -1,11 +1,15 @@
 {
   "name": "@branpurn/x-dm",
   "version": "1.0.0",
-  "description": "OpenClaw channel plugin for X (Twitter) Direct Messages",
+  "description": "OpenClaw channel plugin for X Direct Messages (classic DM + opt-in X Chat)",
   "type": "module",
   "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "files": [
     "src",
+    "tools",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
@@ -18,8 +22,8 @@
     "channel": {
       "id": "x-dm",
       "label": "X DM",
-      "selectionLabel": "X DM (unencrypted, X API)",
-      "blurb": "Bidirectional X (Twitter) DMs over the paid X API."
+      "selectionLabel": "X DM (classic + opt-in Chat)",
+      "blurb": "Bidirectional X DMs over the paid X API. Classic unencrypted DM by default; opt-in X Chat transport."
     },
     "compat": {
       "pluginApi": ">=2026.6.9"
@@ -28,5 +32,9 @@
       "openclawVersion": "2026.7.1-2"
     }
   },
-  "dependencies": {}
+  "dependencies": {},
+  "optionalDependencies": {
+    "@xdevplatform/chat-xdk": "^0.4.3",
+    "juicebox-sdk": "^0.3.0"
+  }
 }

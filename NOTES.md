@@ -74,4 +74,11 @@ The dispatch layer (`inbound.run` / `inbound-reply-dispatch-*.js`) does NOT dedu
 poll-replays — it exposes `recordInboundSession` but no event-level idempotency.
 So: persist `lastSeenEventId` to disk, seed it to "now" on first run (ignore backlog),
 compare IDs as BigInt (not lexically), and write the marker atomically (temp+rename).
-See src/channel.js.
+See src/classic-transport.js.
+
+## Two transports, one channel
+`channels.x-dm.transport` is `classic` (default) or `chat`. Same channel id,
+allowlist, and inbound.dispatch. Classic talks to `/2/dm_*`; Chat talks to
+`/2/chat/*` and decrypts with `@xdevplatform/chat-xdk`. They cannot share a
+bot account (Chat enrollment blinds `dm_events`). Cutover is
+`DEFAULT_TRANSPORT` in `src/transport.js`.
