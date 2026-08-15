@@ -124,17 +124,28 @@ async function register({ force }) {
     }
   }
 
+  // Persist the registration body before Juicebox setup so a crash after the
+  // rate-limited POST can resume the same identity instead of minting another.
+  writeMarker({ body, version, user_id: userId });
+
   if (minted) {
     const keys = await getUserPublicKeys(userId);
     const cfg = juiceboxConfigJson(keys);
     if (!cfg) {
       console.error("Public key POST succeeded but juicebox_config is missing. Re-run to resume.");
-      writeMarker({ body, version, user_id: userId });
       process.exit(1);
     }
     for (const [k, v] of loadRealmTokens(cfg)) realmTokens.set(k, v);
     chat.updateConfig(cfg);
-    await chat.setup(pin);
+    try {
+      await chat.setup(pin);
+    } catch (err) {
+      console.error(
+        `Storing keys in Juicebox failed after public key version ${version} was registered. ` +
+          "Re-run without --force to resume this identity."
+      );
+      throw err;
+    }
     console.log("Keys stored in Juicebox under X_CHAT_PIN.");
   }
 

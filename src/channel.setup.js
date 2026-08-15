@@ -2,7 +2,7 @@
 //
 // Persistence split, matching what the runtime reads:
 //   • the 4 OAuth keys + X_USER_ID  -> ~/.openclaw/x-dm-keys.env  (client.js reads this)
-//   • enabled / dmPolicy / allowFrom -> channels.x-dm.*           (channel.js reads this)
+//   • enabled / transport / dmPolicy / allowFrom -> channels.x-dm.*  (channel.js reads this)
 //
 // Each credential/textInput writes ITSELF to the env file via applySet, so we
 // don't depend on the framework threading values into `credentialValues` (the
@@ -18,6 +18,7 @@ import {
 import { xDmBase } from "./channel.js";
 import { readXDmEnv, mergeXDmEnv, isXDmConfigured } from "./configured-state.js";
 import { DEFAULT_TRANSPORT, normalizeTransport } from "./transport.js";
+import { weakPinReason } from "./chat-pin.js";
 
 const CHANNEL = "x-dm";
 
@@ -157,7 +158,8 @@ export const xDmSetupWizard = {
         return v === "classic" || v === "chat" ? undefined : "Must be classic or chat.";
       },
       applySet: ({ cfg, value }) => {
-        const transport = normalizeTransport(value || DEFAULT_TRANSPORT);
+        if (value == null || String(value).trim() === "") return cfg;
+        const transport = normalizeTransport(value);
         mergeXDmEnv({ X_DM_TRANSPORT: transport });
         return patchChannel(cfg, { transport });
       },
@@ -174,6 +176,11 @@ export const xDmSetupWizard = {
         "After saving, run: node tools/x-chat-register.mjs --confirm",
       ],
       currentValue: () => readXDmEnv().X_CHAT_PIN,
+      validate: ({ value }) => {
+        if (value == null || String(value).trim() === "") return undefined;
+        const reason = weakPinReason(String(value).trim());
+        return reason ? `PIN ${reason}` : undefined;
+      },
       applySet: ({ cfg, value }) => {
         if (value) mergeXDmEnv({ X_CHAT_PIN: String(value).trim() });
         return cfg;

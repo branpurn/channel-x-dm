@@ -3,6 +3,7 @@
 // only called when transport=chat. Missing optional deps keep the Chat path
 // dormant instead of crashing the plugin load.
 import { readXDmEnv } from "./configured-state.js";
+import { weakPinReason } from "./chat-pin.js";
 import {
   getUserPublicKeys,
   juiceboxConfigJson,
@@ -15,27 +16,14 @@ import {
   fetchChatEvents,
 } from "./chat-client.js";
 
+export { weakPinReason };
+
 export function chatPin() {
   return readXDmEnv().X_CHAT_PIN || "";
 }
 
 export function chatSigningKeyVersion(fallback = "1") {
   return readXDmEnv().X_CHAT_SIGNING_KEY_VERSION || fallback;
-}
-
-export function weakPinReason(pin) {
-  const bytes = new TextEncoder().encode(String(pin ?? ""));
-  if (bytes.length < 4) return "must be at least 4 characters";
-  if (bytes.every((b) => b === bytes[0])) return "must not be a single repeated character";
-  const allDigits = bytes.every((b) => b >= 0x30 && b <= 0x39);
-  let ascending = true;
-  let descending = true;
-  for (let i = 1; i < bytes.length; i++) {
-    if (bytes[i] !== bytes[i - 1] + 1) ascending = false;
-    if (bytes[i] !== bytes[i - 1] - 1) descending = false;
-  }
-  if (allDigits && (ascending || descending)) return "must not be a sequential run of digits";
-  return null;
 }
 
 async function loadCreateChat() {

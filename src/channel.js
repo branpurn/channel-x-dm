@@ -6,7 +6,12 @@ import { CHANNEL_ID, rememberCfg, resolveTransport } from "./transport.js";
 import { normalizeXId, looksLikeXId } from "./ids.js";
 import { awaitAbort } from "./poll-utils.js";
 import { startClassicAccount, sendClassicText } from "./classic-transport.js";
-import { startChatAccount, sendChatText } from "./chat-transport.js";
+
+// Chat is loaded only when selected so a Chat-stack failure cannot take
+// classic (the default) down at plugin-import time — including onboard.
+function loadChatTransport() {
+  return import("./chat-transport.js");
+}
 
 function getChannelConfig(cfg) {
   return cfg?.channels?.[CHANNEL_ID] ?? {};
@@ -28,6 +33,7 @@ function listXAccountIds() {
 async function sendForTransport(to, text, { cfg, botId, log } = {}) {
   const transport = resolveTransport(cfg);
   if (transport === "chat") {
+    const { sendChatText } = await loadChatTransport();
     return sendChatText(to, text, { botUserId: botId ?? botUserId(), log });
   }
   return sendClassicText(to, text);
@@ -138,6 +144,7 @@ export const xDmBase = {
         const transport = resolveTransport(ctx.cfg);
         log.info?.(`x-dm: transport=${transport} (default remains classic until Chat is validated)`);
         if (transport === "chat") {
+          const { startChatAccount } = await loadChatTransport();
           return startChatAccount(ctx, { account, botId });
         }
         return startClassicAccount(ctx, { account, botId });

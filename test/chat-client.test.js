@@ -9,8 +9,11 @@ import {
   loadRealmTokens,
   juiceboxConfigJson,
 } from "../src/chat-client.js";
-import { weakPinReason } from "../src/chat-crypto.js";
+import { weakPinReason } from "../src/chat-pin.js";
 import { _internals } from "../src/chat-transport.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 describe("chat-client helpers", () => {
   it("picks the highest public_key_version", () => {
@@ -127,5 +130,25 @@ describe("chat poller internals", () => {
     });
     assert.deepEqual(encoded, ["k1", "m1"]);
     assert.equal(list.length, 1);
+  });
+
+  it("orders Chat events by sequence_id, not message_id", () => {
+    const { eventIdOf } = _internals;
+    assert.equal(
+      eventIdOf({ id: "uuid-zzz", sequence_id: "10" }, { id: "uuid-zzz" }),
+      "10"
+    );
+    assert.equal(eventIdOf({ id: "only-msg" }, { id: "only-msg" }), "only-msg");
+  });
+});
+
+describe("classic isolation", () => {
+  it("does not statically import the Chat transport from channel.js", () => {
+    const src = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/channel.js"),
+      "utf8"
+    );
+    assert.equal(src.includes('from "./chat-transport.js"'), false);
+    assert.equal(src.includes('import("./chat-transport.js")'), true);
   });
 });

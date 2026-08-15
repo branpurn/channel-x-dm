@@ -210,6 +210,7 @@ channel-x-dm/
 │   ├── client.js         # classic DM API
 │   ├── chat-client.js    # /2/chat/* + public_keys HTTP
 │   ├── chat-crypto.js    # lazy chat-xdk / Juicebox session
+│   ├── chat-pin.js       # PIN strength rules (shared with onboard)
 │   ├── oauth.js          # OAuth 1.0a + optional OAuth2 fetch
 │   ├── ids.js            # user / conversation id helpers
 │   ├── dispatch.js       # shared inbound.run adapter

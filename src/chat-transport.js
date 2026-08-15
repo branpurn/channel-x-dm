@@ -2,7 +2,7 @@ import os from "node:os";
 import { MAX_DM_CHARS } from "./client.js";
 import { dispatchInbound } from "./dispatch.js";
 import { idGreater, newestId, peerFromConversation, isGroupConversationId, canonicalConversationId } from "./ids.js";
-import { loadJsonState, saveJsonState, sleep } from "./poll-utils.js";
+import { loadJsonState, saveJsonState, sleep, awaitAbort } from "./poll-utils.js";
 import {
   fetchChatConversations,
   fetchChatEvents,
@@ -30,7 +30,7 @@ const ACTIVE_MS = 90000;
 const ACTIVE_WINDOW_MS = 180000;
 const RATE_LIMIT_FLOOR = 2;
 
-let _session = null;
+let _sessionPromise = null;
 
 function loadState() {
   const j = loadJsonState(STATE_FILE, {});
@@ -43,12 +43,17 @@ function saveState(state) {
   saveJsonState(STATE_FILE, { conversations: state.conversations });
 }
 
+// Prefer sequence_id: the Chat API's ordering field. message_id is not
+// guaranteed to be a snowflake, so using it as lastSeen would skip or
+// replay under lexical compare.
 function eventIdOf(item, decrypted) {
   return String(
-    decrypted?.id ??
-      item?.id ??
-      item?.sequence_id ??
+    item?.sequence_id ??
       item?.sequenceId ??
+      decrypted?.sequenceId ??
+      decrypted?.sequence_id ??
+      decrypted?.id ??
+      item?.id ??
       ""
   );
 }
@@ -90,9 +95,13 @@ function collectEncoded(page) {
 }
 
 export async function getChatSession(botUserId, log) {
-  if (_session) return _session;
-  _session = await createChatSession({ botUserId, log });
-  return _session;
+  if (!_sessionPromise) {
+    _sessionPromise = createChatSession({ botUserId, log }).catch((err) => {
+      _sessionPromise = null;
+      throw err;
+    });
+  }
+  return _sessionPromise;
 }
 
 export async function sendChatText(recipientId, text, { botUserId, log = console } = {}) {
@@ -126,7 +135,6 @@ export async function startChatAccount(ctx, { account, botId }) {
         "Classic inbound will also be dark on a PIN-enrolled account. " +
         "Set the PIN (after tools/x-chat-register.mjs) or switch transport back to classic. Staying dormant."
     );
-    const { awaitAbort } = await import("./poll-utils.js");
     await awaitAbort(ctx?.abortSignal);
     return;
   }
@@ -136,7 +144,6 @@ export async function startChatAccount(ctx, { account, botId }) {
     session = await getChatSession(botId, log);
   } catch (err) {
     log.error?.(`x-dm: chat session failed — ${err.message}. Staying dormant.`);
-    const { awaitAbort } = await import("./poll-utils.js");
     await awaitAbort(ctx?.abortSignal);
     return;
   }
@@ -164,15 +171,16 @@ export async function startChatAccount(ctx, { account, botId }) {
   };
 
   const pollConversation = async (peerId) => {
-    const page = await fetchChatEvents(peerId, { maxResults: 50 });
+    // First page is treated as newest (same assumption as classic dm_events).
+    // We re-fetch it each poll and advance lastSeen by sequence_id rather than
+    // walking next_token, which on X APIs is typically older history.
+    const page = await fetchChatEvents(peerId, { maxResults: 100 });
     noteRateLimit(page.remaining, page.limit, page.reset);
-    const { list, meta, encoded } = collectEncoded(page);
+    const { list, encoded } = collectEncoded(page);
     const senders = list.map((e) => e.sender_id ?? e.senderId).filter(Boolean);
     await ensureSigningKeys(session, senders, { log });
 
-    const keyEvents = meta.conversation_key_events ?? meta.conversationKeyEvents ?? [];
     if (encoded.length) decryptBatch(session, encoded);
-    else if (keyEvents.length) decryptBatch(session, keyEvents);
 
     const convKey = String(peerId);
     const prev = state.conversations[convKey] ?? {};
